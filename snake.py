@@ -6,6 +6,8 @@ import termios
 import atexit
 import time
 import select
+from collections import deque
+
 
 def move_cursor(x, y):
     """
@@ -91,6 +93,8 @@ DIR_MAP = {
 }
 cur_dir = DIR_MAP['d']
 interval = 1
+length = 5
+body = deque([(cur_dir[0], x, y)])
 while True:
     move_cursor(x, y)
     print(cur_dir[0], end='')
@@ -103,8 +107,10 @@ while True:
             c = sys.stdin.read(1)
             cur_dir = DIR_MAP.get(c, cur_dir)
         now = time.time()
-    move_cursor(x, y)
-    print(' ', end='')
+    if len(body) >= length:
+        _, tx, ty = body.popleft()
+        move_cursor(tx, ty)
+        print(' ', end='')
     _, dx, dy = cur_dir
     x += dx
     y += dy
@@ -116,3 +122,4 @@ while True:
         y = term_height - 2
     elif y >= term_height - 1:
         y = 2
+    body.append((cur_dir[0], x, y))
