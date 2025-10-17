@@ -80,5 +80,34 @@ for y in range(1, term_height):
         else:
             print(' ', end='')
 
-move_cursor(2, 2)
-input("Press Enter to exit...")
+x = 2
+y = 2
+dir = 0
+DIR_MAP = {
+    'w': ('^', 0, -1),
+    'a': ('<', -1, 0),
+    's': ('v', 0, 1),
+    'd': ('>', 1, 0)
+}
+cur_dir = DIR_MAP['d']
+while True:
+    move_cursor(x, y)
+    print(cur_dir[0], end='')
+    sys.stdout.flush()
+    now = time.time()
+    cur_dir = None
+    while cur_dir is None:
+        cur_dir = DIR_MAP.get(sys.stdin.read(1), None)
+    move_cursor(x, y)
+    print(' ', end='')
+    _, dx, dy = cur_dir
+    x += dx
+    y += dy
+    if x <= 1:
+        x = term_width - 2
+    elif x >= term_width - 1:
+        x = 2
+    if y <= 1:
+        y = term_height - 2
+    elif y >= term_height - 1:
+        y = 2
