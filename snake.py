@@ -90,14 +90,19 @@ DIR_MAP = {
     'd': ('>', 1, 0)
 }
 cur_dir = DIR_MAP['d']
+interval = 1
 while True:
     move_cursor(x, y)
     print(cur_dir[0], end='')
     sys.stdout.flush()
     now = time.time()
-    cur_dir = None
-    while cur_dir is None:
-        cur_dir = DIR_MAP.get(sys.stdin.read(1), None)
+    stop = now + interval
+    while now < stop:
+        rlist, _, _ =  select.select([sys.stdin], [], [], stop - now)
+        if sys.stdin in rlist:
+            c = sys.stdin.read(1)
+            cur_dir = DIR_MAP.get(c, cur_dir)
+        now = time.time()
     move_cursor(x, y)
     print(' ', end='')
     _, dx, dy = cur_dir
