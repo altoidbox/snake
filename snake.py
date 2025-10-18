@@ -120,7 +120,8 @@ class Screen(Grid):
     def draw_glyph(self, pos, glyph):
         move_cursor(pos.x, pos.y)
         print(glyph, end='')
-        self[pos] = glyph
+        for x in range(len(glyph)):
+            self[pos.x + x, pos.y] = glyph[x]
 
     def draw_border(self, start=Point(0, 0), end=None, border='█', clear=True, h_size=1, v_size=1):
         if end is None:
@@ -148,48 +149,69 @@ class Screen(Grid):
         sys.stdout.flush()
 
 
+KEY_MAP = {
+    'w': '^',
+    'a': '<',
+    's': 'v',
+    'd': '>',
+}
 DIR_MAP = {
-    'w': ('^', Point(0, -1)),
-    'a': ('<', Point(-2, 0)),
-    's': ('v', Point(0, 1)),
-    'd': ('>', Point(2, 0)),
+    '^': Point(0, -1),
+    'v': Point(0, 1),
+    '<': Point(-2, 0),
+    '>': Point(2, 0),
+}
+REVERSE_MAP = {
+    '^': 'v',
+    'v': '^',
+    '<': '>',
+    '>': '<',
+}
+GLYPH_MAP = {
+    '<': '<─',
 }
 TURN_MAP = {
-    '^': { '>': '/', '<': '\\', '^': '|' },
-    'v': { '>': '\\', '<': '/', 'v': '|' },
-    '<': { '^': '\\', 'v': '/', '<': '-' },
-    '>': { '^': '/', 'v': '\\', '>': '-' },
+    '^': { '>': '╭─', '<': '╮', '^': '│' },
+    'v': { '>': '╰─', '<': '╯', 'v': '│' },
+    '<': { '^': '╰', 'v': '╭', '<': '──' },
+    '>': { '^': '╯', 'v': '╮', '>': '──' },
 }
 
 def run():
     screen = Screen()
     screen.draw_border(h_size=2)
     pos = Point(2, 1)
-    cur_dir = DIR_MAP['d']
+    cur_dir = '>'
     interval = 1
     length = 5
     body = deque([pos])
     while True:
-        screen.draw_glyph(pos, cur_dir[0])
+        screen.draw_glyph(pos, GLYPH_MAP.get(cur_dir, cur_dir))
         sys.stdout.flush()
         now = time.time()
         stop = now + interval
+        prev_dir = cur_dir
         while now < stop:
             rlist, _, _ =  select.select([sys.stdin], [], [], stop - now)
             if sys.stdin in rlist:
                 c = sys.stdin.read(1)
-                cur_dir = DIR_MAP.get(c, cur_dir)
+                new_dir = KEY_MAP.get(c, cur_dir)
+                # Prevent reversing direction
+                if REVERSE_MAP[new_dir] != prev_dir:
+                    cur_dir = new_dir
             now = time.time()
-        _, dp = cur_dir
-        pos += dp
-        if screen[pos] != ' ':
-            # Hit border, game over
-            screen.dialog("Game Over! Press Enter to exit.")
-            break
+        pos += DIR_MAP[cur_dir]
+        # Remove tail if necessary, before checking collisions
         if len(body) >= length:
             tail_pos = body.popleft()
-            screen.draw_glyph(tail_pos, ' ')
-        screen.draw_glyph(body[-1], TURN_MAP[screen[body[-1]]][cur_dir[0]])
+            screen.draw_glyph(tail_pos, '  ')
+        crash = screen[pos] != ' '
+        screen.draw_glyph(body[-1], TURN_MAP[screen[body[-1]]][cur_dir])
+        if crash:
+            # Hit border, game over
+            screen.dialog("Game Over! Press Enter to exit.")
+            input()
+            break
         body.append(pos)
 
 
@@ -198,4 +220,5 @@ if __name__ == '__main__':
         prepare_terminal()
         run()
     finally:
-        input()
+        atexit._run_exitfuncs()
+        atexit._clear()
