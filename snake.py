@@ -86,6 +86,9 @@ class Point(object):
 
     def tuple(self):
         return (self.x, self.y)
+    
+    def __str__(self):
+        return str(self.tuple())
 
 
 class Grid(object):
@@ -113,17 +116,25 @@ class Grid(object):
 
 
 class Screen(Grid):
-    def __init__(self):
+    def __init__(self, glyph_width=1):
         width, height = shutil.get_terminal_size()
+        width = width // glyph_width
         super().__init__(width, height)
+        self.glyph_width = glyph_width
     
     def draw_glyph(self, pos, glyph):
-        move_cursor(pos.x, pos.y)
+        alignment = len(glyph) % self.glyph_width
+        if alignment != 0:
+            glyph += ' ' * (self.glyph_width - alignment)
+        move_cursor(pos.x * self.glyph_width, pos.y)
         print(glyph, end='')
-        for x in range(len(glyph)):
-            self[pos.x + x, pos.y] = glyph[x]
+        for grid_idx, glyph_idx in enumerate(range(0, len(glyph), self.glyph_width)):
+            cur = glyph[glyph_idx:glyph_idx + self.glyph_width]
+            self[pos.x + grid_idx, pos.y] = cur
 
     def draw_border(self, start=Point(0, 0), end=None, border='█', clear=True, h_size=1, v_size=1):
+        if len(border) == 1:
+            border = border * self.glyph_width
         if end is None:
             end = Point(self.width - 1, self.height - 1)
         h_border = set(range(start.x, start.x + h_size)) | set(range(end.x - h_size + 1, end.x + 1))
@@ -134,7 +145,7 @@ class Screen(Grid):
                 if (x in h_border) or (y in v_border):
                     fill = border
                 elif clear:
-                    fill = ' '
+                    fill = ' ' * self.glyph_width
                 else:
                     continue
                 self.draw_glyph(Point(x, y), fill)
@@ -142,51 +153,73 @@ class Screen(Grid):
     def dialog(self, message):
         mid_x = self.width // 2
         mid_y = self.height // 2
-        start_x = mid_x - len(message) // 2
-        self.draw_border(start=Point(start_x - 3, mid_y - 2), end=Point(start_x + len(message) + 2, mid_y + 2), border='#')
-        move_cursor(start_x, mid_y)
-        print(message, end='')
+        msg_glyph_len = (len(message) + self.glyph_width - 1) // self.glyph_width
+        start_x = mid_x - msg_glyph_len // 2
+        self.draw_border(start=Point(start_x - 3, mid_y - 2), end=Point(start_x + msg_glyph_len + 2, mid_y + 2), border='#')
+        self.draw_glyph(Point(start_x, mid_y), message)
         sys.stdout.flush()
 
+#U_HEAD = ' ^'
+#D_HEAD = ' v'
+#L_HEAD = ' <'
+#R_HEAD = '─>'
+
+#U_HEAD = ' △'
+#D_HEAD = ' ▽'
+#L_HEAD = ' ◁'
+#R_HEAD = '─▷'
+
+U_HEAD = ' ▲'
+D_HEAD = ' ▼'
+L_HEAD = ' ◄'
+R_HEAD = '─►'
 
 KEY_MAP = {
-    'w': '^',
-    'a': '<',
-    's': 'v',
-    'd': '>',
+    'w': U_HEAD,
+    'a': L_HEAD,
+    's': D_HEAD,
+    'd': R_HEAD,
 }
 DIR_MAP = {
-    '^': Point(0, -1),
-    'v': Point(0, 1),
-    '<': Point(-2, 0),
-    '>': Point(2, 0),
+    U_HEAD: Point(0, -1),
+    D_HEAD: Point(0, 1),
+    L_HEAD: Point(-1, 0),
+    R_HEAD: Point(1, 0),
 }
 REVERSE_MAP = {
-    '^': 'v',
-    'v': '^',
-    '<': '>',
-    '>': '<',
-}
-GLYPH_MAP = {
-    '<': '<─',
+    U_HEAD: D_HEAD,
+    D_HEAD: U_HEAD,
+    L_HEAD: R_HEAD,
+    R_HEAD: L_HEAD,
 }
 TURN_MAP = {
-    '^': { '>': '╭─', '<': '╮', '^': '│' },
-    'v': { '>': '╰─', '<': '╯', 'v': '│' },
-    '<': { '^': '╰', 'v': '╭', '<': '──' },
-    '>': { '^': '╯', 'v': '╮', '>': '──' },
+    U_HEAD: { R_HEAD: ' ╭', L_HEAD: '─╮', U_HEAD: ' │' },
+    D_HEAD: { R_HEAD: ' ╰', L_HEAD: '─╯', D_HEAD: ' │' },
+    L_HEAD: { U_HEAD: ' ╰', D_HEAD: ' ╭', L_HEAD: '──' },
+    R_HEAD: { U_HEAD: '─╯', D_HEAD: '─╮', R_HEAD: '──' },
+}
+CRASH_MAP = {
+    U_HEAD: ' ☠︎',
+    D_HEAD: ' ☠︎',
+    L_HEAD: ' ☠︎',
+    R_HEAD: '─☠︎',
 }
 
 def run():
-    screen = Screen()
-    screen.draw_border(h_size=2)
-    pos = Point(2, 1)
-    cur_dir = '>'
+    screen = Screen(glyph_width=2)
+    screen.draw_border()
+    screen.draw_glyph(Point(0, 0), f'W:{screen.width} H:{screen.height}')
+    pos = Point(1, 1)
+    cur_dir = R_HEAD
     interval = 1
     length = 5
     body = deque([pos])
     while True:
-        screen.draw_glyph(pos, GLYPH_MAP.get(cur_dir, cur_dir))
+        screen.draw_glyph(pos, cur_dir)
+        if screen[pos] != cur_dir:
+            screen.dialog("Screen corruption detected! Press Enter to exit.")
+            input()
+            break
         sys.stdout.flush()
         now = time.time()
         stop = now + interval
@@ -194,7 +227,7 @@ def run():
         while now < stop:
             rlist, _, _ =  select.select([sys.stdin], [], [], stop - now)
             if sys.stdin in rlist:
-                c = sys.stdin.read(1)
+                c = sys.stdin.read(1).lower()
                 new_dir = KEY_MAP.get(c, cur_dir)
                 # Prevent reversing direction
                 if REVERSE_MAP[new_dir] != prev_dir:
@@ -205,9 +238,10 @@ def run():
         if len(body) >= length:
             tail_pos = body.popleft()
             screen.draw_glyph(tail_pos, '  ')
-        crash = screen[pos] != ' '
         screen.draw_glyph(body[-1], TURN_MAP[screen[body[-1]]][cur_dir])
-        if crash:
+        if screen[pos] != '  ':
+            #screen.draw_glyph(pos, screen[pos][:-1] + '*')
+            screen.draw_glyph(pos, CRASH_MAP[cur_dir])
             # Hit border, game over
             screen.dialog("Game Over! Press Enter to exit.")
             input()
