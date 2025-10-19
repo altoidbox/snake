@@ -6,6 +6,7 @@ import termios
 import atexit
 import time
 import select
+import random
 from collections import deque
 
 
@@ -89,6 +90,12 @@ class Point(object):
     
     def __str__(self):
         return str(self.tuple())
+
+    def __eq__(self, value):
+        return self.tuple() == value.tuple()
+
+    def __hash__(self):
+        return hash(self.tuple())
 
 
 class Grid(object):
@@ -174,6 +181,10 @@ D_HEAD = ' ▼'
 L_HEAD = ' ◄'
 R_HEAD = '─►'
 
+# The fruit are wider than a single monospaced character, so put them on the left side
+TREATS = [ '🍎 ', '🍒 ', '🍊 ', '🍓 ', '🍇 ', '🍑 ' ]
+#          '1234'
+BLANK = '  '
 KEY_MAP = {
     'w': U_HEAD,
     'a': L_HEAD,
@@ -205,21 +216,41 @@ CRASH_MAP = {
     R_HEAD: '─☠︎',
 }
 
+BASE_LENGTH = 2
+def print_score(score):
+    move_cursor(1, 0)
+    print(f'\033[7mScore: {score}   \033[0m', end='')
+
+
 def run():
     screen = Screen(glyph_width=2)
+    if screen.width > screen.height * 2:
+        screen.width = screen.height * 2
     screen.draw_border()
     screen.draw_glyph(Point(0, 0), f'W:{screen.width} H:{screen.height}')
     pos = Point(1, 1)
     cur_dir = R_HEAD
     interval = 1
-    length = 5
+    length = BASE_LENGTH
     body = deque([pos])
+    treats = set()
+    treat_counter = 20
+    print_score(0)
     while True:
         screen.draw_glyph(pos, cur_dir)
-        if screen[pos] != cur_dir:
-            screen.dialog("Screen corruption detected! Press Enter to exit.")
-            input()
-            break
+        # Handle Treats
+        treat_counter -= 1
+        if treat_counter == 0 and len(treats) < 3:
+            while True:
+                treat_pos = Point(random.randint(1, screen.width - 2), random.randint(1, screen.height - 2))
+                if screen[treat_pos] == BLANK:
+                    break
+            screen.draw_glyph(treat_pos, random.choice(TREATS))
+            treats.add(treat_pos)
+            treat_counter = random.randint(10, 20)  # Number of moves before next treat
+        elif treat_counter < 0 or (len(treats) == 0 and treat_counter > 5):
+            treat_counter = random.randint(1, 5)
+
         sys.stdout.flush()
         now = time.time()
         stop = now + interval
@@ -234,16 +265,23 @@ def run():
                     cur_dir = new_dir
             now = time.time()
         pos += DIR_MAP[cur_dir]
+        # Check for treat
+        if pos in treats:
+            treats.remove(pos)
+            length += 1
+            interval = max(0.1, interval * 0.90)  # Speed up
+            screen.draw_glyph(pos, BLANK)
+            print_score(length - BASE_LENGTH)
         # Remove tail if necessary, before checking collisions
         if len(body) >= length:
             tail_pos = body.popleft()
-            screen.draw_glyph(tail_pos, '  ')
+            screen.draw_glyph(tail_pos, BLANK)
         screen.draw_glyph(body[-1], TURN_MAP[screen[body[-1]]][cur_dir])
-        if screen[pos] != '  ':
-            #screen.draw_glyph(pos, screen[pos][:-1] + '*')
+        if screen[pos] != BLANK:
+            crash_char = screen[pos]
+            # Hit border or body, game over
             screen.draw_glyph(pos, CRASH_MAP[cur_dir])
-            # Hit border, game over
-            screen.dialog("Game Over! Press Enter to exit.")
+            screen.dialog(f"Game Over! Press Enter to exit.")
             input()
             break
         body.append(pos)
