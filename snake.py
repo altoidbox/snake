@@ -216,10 +216,23 @@ CRASH_MAP = {
     R_HEAD: '─☠︎',
 }
 
+
+def invert_color(text):
+    return f'\033[7m{text}\033[0m'
+
+
+STARTING_INTERVAL = 0.8
 BASE_LENGTH = 2
-def print_score(score):
-    move_cursor(1, 0)
-    print(f'\033[7mScore: {score}   \033[0m', end='')
+
+
+def print_score(screen, score, speed):
+    width = (screen.width - 2) * screen.glyph_width
+    left_msg = f'Score: {score}'
+    right_msg = f'Speed: {speed:.2f}s'
+    mid_space = width - len(left_msg) - len(right_msg)
+    msg = left_msg + ' ' * mid_space + right_msg
+    move_cursor(screen.glyph_width, 0)
+    print(invert_color(msg), end='')
 
 
 def run():
@@ -227,15 +240,14 @@ def run():
     if screen.width > screen.height * 2:
         screen.width = screen.height * 2
     screen.draw_border()
-    screen.draw_glyph(Point(0, 0), f'W:{screen.width} H:{screen.height}')
     pos = Point(1, 1)
     cur_dir = R_HEAD
-    interval = 1
+    interval = STARTING_INTERVAL
     length = BASE_LENGTH
     body = deque([pos])
     treats = set()
     treat_counter = 20
-    print_score(0)
+    print_score(screen, 0, interval)
     while True:
         screen.draw_glyph(pos, cur_dir)
         # Handle Treats
@@ -271,7 +283,7 @@ def run():
             length += 1
             interval = max(0.1, interval * 0.90)  # Speed up
             screen.draw_glyph(pos, BLANK)
-            print_score(length - BASE_LENGTH)
+            print_score(screen, length - BASE_LENGTH, interval)
         # Remove tail if necessary, before checking collisions
         if len(body) >= length:
             tail_pos = body.popleft()
