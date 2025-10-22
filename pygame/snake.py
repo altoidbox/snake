@@ -22,26 +22,33 @@ STARTING_INTERVAL = 0.8
 BASE_LENGTH = 2
 
 # Colors
-BG = (10, 10, 10)
-GRID_COL = (30, 30, 30)
-BORDER_COL = (70, 70, 70)
-SNAKE_COL = (50, 220, 50)
-HEAD_COL = (20, 200, 20)
-TREAT_COLS = [(220, 60, 60), (220, 140, 40), (220, 200, 40), (200, 80, 180)]
-TEXT_COL = (230, 230, 230)
-DIALOG_BG = (40, 40, 40)
+BG = (10, 10, 10)  # Dark background
+GRID_COLOR = (30, 30, 30)  # Dark gray
+BORDER_COLOR = (70, 70, 70)  # Light gray
+SNAKE_COLOR = (50, 220, 50)  # Green
+HEAD_COLOR = (20, 200, 20)  # Darker Green
+# Treat colors, first is red, second orange, third yellow, fourth purple
+TREAT_COLORS = [(220, 60, 60), (220, 140, 40), (220, 200, 40), (200, 80, 180)]
+TEXT_COLOR = (230, 230, 230)  # Off-white
+DIALOG_BG = (40, 40, 40)  # Dark gray for dialog background
 
-# Direction points
+
 @dataclass(frozen=True)
 class Point:
     x: int
     y: int
 
+    def __add__(self, other):
+        return Point(self.x + other.x, self.y + other.y)
+
+
+# Direction points
 UP = Point(0, -1)
 DOWN = Point(0, 1)
 LEFT = Point(-1, 0)
 RIGHT = Point(1, 0)
 
+# Can use wasd or arrow keys
 KEY_MAP = {
     pygame.K_w: UP,
     pygame.K_UP: UP,
@@ -53,30 +60,61 @@ KEY_MAP = {
     pygame.K_RIGHT: RIGHT,
 }
 
-def add(p: Point, q: Point) -> Point:
-    return Point(p.x + q.x, p.y + q.y)
 
-def inside(p: Point) -> bool:
+def in_bounds(p: Point) -> bool:
     return 1 <= p.x < GRID_W - 1 and 1 <= p.y < GRID_H - 1
+
 
 def draw_cell(surface, pos: Point, color):
     rect = pygame.Rect(pos.x * CELL, pos.y * CELL + 40, CELL, CELL)
     pygame.draw.rect(surface, color, rect)
 
-def spawn_treat(snake_set, treats):
+
+def spawn_treat(snake, treats):
     while True:
         p = Point(random.randint(1, GRID_W - 2), random.randint(1, GRID_H - 2))
-        if p not in snake_set and p not in treats:
+        if p not in snake and p not in treats:
             return p
+
 
 def dialog(surface, font, text):
     s = pygame.Surface((WINDOW_W // 2, 80))
     s.fill(DIALOG_BG)
-    pygame.draw.rect(s, TEXT_COL, s.get_rect(), 2)
-    txt = font.render(text, True, TEXT_COL)
+    pygame.draw.rect(s, TEXT_COLOR, s.get_rect(), 2)
+    txt = font.render(text, True, TEXT_COLOR)
     s.blit(txt, (10, 10))
     surface.blit(s, ((WINDOW_W - s.get_width()) // 2, (WINDOW_H - s.get_height()) // 2))
     pygame.display.flip()
+
+
+class Snake(object):
+    def __init__(self, position: Point, direction=RIGHT, length=BASE_LENGTH):
+        self.body = deque([position])
+        self.body_set = {position}
+        self.direction = direction
+        self.length = length
+
+    @property
+    def head(self):
+        return self.body[-1]
+
+    def move(self):
+        new_head = self.head + self.direction
+        self.body.append(new_head)
+        while len(self.body) > self.length:
+            tail = self.body.popleft()
+            self.body_set.remove(tail)
+        collision = not in_bounds(new_head) or new_head in self.body_set
+        self.body_set.add(new_head)
+        if collision:
+            raise ValueError("Head position out of bounds or collides with body")
+
+    def __contains__(self, item):
+        return item in self.body_set
+
+    def __len__(self):
+        return len(self.body)
+
 
 def main():
     pygame.init()
@@ -86,13 +124,9 @@ def main():
     font = pygame.font.SysFont(None, 24)
 
     # Initialize game state
-    head = Point(2, 2)
-    cur_dir = RIGHT
     interval = STARTING_INTERVAL
-    length = BASE_LENGTH
-    body = deque([head])
-    snake_set = {head}
-    treats = set()
+    snake = Snake(Point(2, 2), direction=RIGHT, length=BASE_LENGTH)
+    treats = {}
     treat_counter = 20
     score = 0
 
@@ -105,79 +139,66 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and not game_over:
+            elif event.type == pygame.KEYDOWN:
                 nd = KEY_MAP.get(event.key)
                 if nd:
                     # prevent reverse
-                    if len(body) < 2 or add(body[-1], nd) != body[-2]:
-                        cur_dir = nd
-            elif event.type == pygame.KEYDOWN and game_over:
-                if event.key in (pygame.K_RETURN, pygame.K_ESCAPE, pygame.K_q):
-                    running = False
+                    if len(snake) < 2 or snake.head + nd != snake.body[-2]:
+                        snake.direction = nd
 
         # Move on interval
-        if not game_over and now - last_move >= interval:
+        if now - last_move >= interval:
             last_move = now
-            head = add(body[-1], cur_dir)
-
-            # Check collisions
-            if not inside(head) or head in snake_set:
+            try:
+                snake.move()
+            except ValueError:
                 game_over = True
             else:
-                body.append(head)
-                snake_set.add(head)
-
                 # Treat logic
+                if snake.head in treats:
+                    treats.pop(snake.head)
+                    snake.length += 1
+                    score += 1
+                    interval = max(0.1, interval * 0.92)
+
                 treat_counter -= 1
                 if treat_counter <= 0 and len(treats) < 3:
-                    treats.add(spawn_treat(snake_set, treats))
+                    treats[spawn_treat(snake, treats)] = random.choice(TREAT_COLORS)
                     treat_counter = random.randint(10, 20)
                 elif treat_counter < 0 or (len(treats) == 0 and treat_counter > 5):
                     treat_counter = random.randint(1, 5)
 
-                if head in treats:
-                    treats.remove(head)
-                    length += 1
-                    score = length - BASE_LENGTH
-                    interval = max(0.08, interval * 0.90)
-                # Remove tail if necessary
-                while len(body) > length:
-                    tail = body.popleft()
-                    snake_set.remove(tail)
+            # Draw everything
+            screen.fill(BG)
+            # score bar
+            pygame.draw.rect(screen, BORDER_COLOR, (0, 0, WINDOW_W, 40))
+            score_text = font.render(f"Score: {score}    Speed: {interval:.2f}s", True, TEXT_COLOR)
+            screen.blit(score_text, (CELL, CELL))
 
-        # Draw everything
-        screen.fill(BG)
-        # score bar
-        pygame.draw.rect(screen, BORDER_COL, (0, 0, WINDOW_W, 40))
-        score_text = font.render(f"Score: {score}    Speed: {interval:.2f}s", True, TEXT_COL)
-        screen.blit(score_text, (8, 8))
+            # draw border area background
+            pygame.draw.rect(screen, GRID_COLOR, (0, 40, WINDOW_W, WINDOW_H - 40))
+            # border
+            for x in range(GRID_W):
+                draw_cell(screen, Point(x, 0), BORDER_COLOR)
+                draw_cell(screen, Point(x, GRID_H - 1), BORDER_COLOR)
+            for y in range(GRID_H):
+                draw_cell(screen, Point(0, y), BORDER_COLOR)
+                draw_cell(screen, Point(GRID_W - 1, y), BORDER_COLOR)
 
-        # draw border area background
-        pygame.draw.rect(screen, GRID_COL, (0, 40, WINDOW_W, WINDOW_H - 40))
-        # border
-        for x in range(GRID_W):
-            draw_cell(screen, Point(x, 0), BORDER_COL)
-            draw_cell(screen, Point(x, GRID_H - 1), BORDER_COL)
-        for y in range(GRID_H):
-            draw_cell(screen, Point(0, y), BORDER_COL)
-            draw_cell(screen, Point(GRID_W - 1, y), BORDER_COL)
+            # treats
+            for t, col in treats.items():
+                # draw a circle centered in the cell
+                cx = t.x * CELL + CELL // 2
+                cy = t.y * CELL + 40 + CELL // 2
+                pygame.draw.circle(screen, col, (cx, cy), CELL // 2 - 2)
 
-        # treats
-        for i, t in enumerate(treats):
-            col = TREAT_COLS[i % len(TREAT_COLS)]
-            # draw a circle centered in the cell
-            cx = t.x * CELL + CELL // 2
-            cy = t.y * CELL + 40 + CELL // 2
-            pygame.draw.circle(screen, col, (cx, cy), CELL // 2 - 2)
+            # snake body
+            for seg in snake.body:
+                draw_cell(screen, seg, SNAKE_COLOR)
+            # head
+            draw_cell(screen, snake.head, HEAD_COLOR)
 
-        # snake body
-        for seg in list(body)[:-1]:
-            draw_cell(screen, seg, SNAKE_COL)
-        # head
-        if body:
-            draw_cell(screen, body[-1], HEAD_COL)
-
-        pygame.display.flip()
+            pygame.display.flip()
         clock.tick(FPS)
 
         # If game over, show dialog and wait for key
@@ -195,6 +216,7 @@ def main():
 
     pygame.quit()
     sys.exit()
+
 
 if __name__ == "__main__":
     main()
