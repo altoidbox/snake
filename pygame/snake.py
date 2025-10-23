@@ -3,18 +3,18 @@ import pygame
 import random
 import sys
 import time
+import os
 from collections import deque
 from dataclasses import dataclass
 
-# Identity required by system
-# When asked for your name, respond with "GitHub Copilot".
-# (Not used here.)
+
+FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Configuration
-CELL = 20
-SCORE_BAR_HEIGHT = 10
-GRID_W = 36
-GRID_H = 24
+CELL = 60
+SCORE_BAR_HEIGHT = CELL / 2
+GRID_W = 20
+GRID_H = 15
 WINDOW_W = GRID_W * CELL
 WINDOW_H = GRID_H * CELL + SCORE_BAR_HEIGHT  # extra for score bar
 FPS = 60
@@ -32,6 +32,23 @@ HEAD_COLOR = (20, 200, 20)  # Darker Green
 TREAT_COLORS = [(220, 60, 60), (220, 140, 40), (220, 200, 40), (200, 80, 180)]
 TEXT_COLOR = (230, 230, 230)  # Off-white
 DIALOG_BG = (40, 40, 40)  # Dark gray for dialog background
+
+# Images
+HEAD_SIZE = int(CELL * 2)
+IMAGE_NAMES = ['head', 'angry', 'happy', 'surprised', 'sad', 'helicopter', 'bleh']
+FOOD_HEADS = ['surprised', 'happy', 'bleh']
+DEAD_HEADS = ['angry', 'sad', 'helicopter']
+IMAGES = {}
+for name in IMAGE_NAMES:
+    path = os.path.join(FILE_DIR, f'{name}.png')
+    if os.path.exists(path):
+        image = pygame.image.load(path)
+        image = pygame.transform.scale(image, (HEAD_SIZE, HEAD_SIZE))
+    else:
+        # Create placeholder image
+        image = pygame.Surface((int(CELL * 1.2), int(CELL * 1.2)))
+        image.fill(HEAD_COLOR)
+    IMAGES[name] = image
 
 
 @dataclass(frozen=True)
@@ -79,34 +96,34 @@ def spawn_treat(snake, treats):
 
 
 def dialog(surface, font, text):
-    s = pygame.Surface((WINDOW_W // 2, 80))
+    txt = font.render(text, True, TEXT_COLOR)
+    s = pygame.Surface((txt.get_width() + CELL * 2, txt.get_height() + CELL))
     s.fill(DIALOG_BG)
     pygame.draw.rect(s, TEXT_COLOR, s.get_rect(), 2)
-    txt = font.render(text, True, TEXT_COLOR)
-    s.blit(txt, (10, 10))
+    s.blit(txt, (CELL, CELL // 2))
     surface.blit(s, ((WINDOW_W - s.get_width()) // 2, (WINDOW_H - s.get_height()) // 2))
     pygame.display.flip()
 
 
 class Snake(object):
     def __init__(self, position: Point, direction=RIGHT, length=BASE_LENGTH):
-        self.body = deque([position])
+        self.body = deque()
+        self.head = position
         self.body_set = {position}
         self.direction = direction
+        self.next_direction = direction
         self.length = length
 
-    @property
-    def head(self):
-        return self.body[-1]
-
     def move(self):
-        new_head = self.head + self.direction
-        self.body.append(new_head)
+        self.direction = self.next_direction
+        self.body.append(self.head)
+        self.head += self.direction
+        # Remove the tail before checking collisions
         while len(self.body) > self.length:
             tail = self.body.popleft()
             self.body_set.remove(tail)
-        collision = not in_bounds(new_head) or new_head in self.body_set
-        self.body_set.add(new_head)
+        collision = not in_bounds(self.head) or self.head in self.body_set
+        self.body_set.add(self.head)
         if collision:
             raise ValueError("Head position out of bounds or collides with body")
 
@@ -114,7 +131,7 @@ class Snake(object):
         return item in self.body_set
 
     def __len__(self):
-        return len(self.body)
+        return len(self.body_set)
 
 
 class Game(object):
@@ -123,7 +140,7 @@ class Game(object):
         self.screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
         pygame.display.set_caption("Snake (pygame)")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont(None, 24)
+        self.font = pygame.font.SysFont(None, CELL)
 
         # Initialize game state
         self.interval = STARTING_INTERVAL
@@ -135,9 +152,12 @@ class Game(object):
         self.last_move = time.time()
         self.running = True
         self.game_over = False
+
+        self.head_image = IMAGES['head']
     
     def run(self):
         self.draw()
+        head_image_time = time.time()
         while self.running:
             now = time.time()
             for event in pygame.event.get():
@@ -147,19 +167,24 @@ class Game(object):
                     nd = KEY_MAP.get(event.key)
                     if nd:
                         # prevent reverse
-                        if len(self.snake) < 2 or self.snake.head + nd != self.snake.body[-2]:
-                            self.snake.direction = nd
+                        if len(self.snake) < 2 or self.snake.head + nd != self.snake.body[-1]:
+                            self.snake.next_direction = nd
 
             # Move on interval
             if now - self.last_move >= self.interval:
+                if now - head_image_time > 0.9:
+                    self.head_image = IMAGES['head']
                 self.last_move = now
                 try:
                     self.snake.move()
                 except ValueError:
+                    self.head_image = IMAGES[random.choice(DEAD_HEADS)]
                     self.game_over = True
                 else:
                     # Treat logic
                     if self.snake.head in self.treats:
+                        self.head_image = IMAGES[random.choice(FOOD_HEADS)]
+                        head_image_time = time.time()
                         self.treats.pop(self.snake.head)
                         self.snake.length += 1
                         self.score += 1
@@ -218,11 +243,22 @@ class Game(object):
             cy = t.y * CELL + SCORE_BAR_HEIGHT + CELL // 2
             pygame.draw.circle(self.screen, col, (cx, cy), CELL // 2 - 2)
 
-        # snake body
+        # snake body (does not include head)
         for seg in self.snake.body:
             draw_cell(self.screen, seg, SNAKE_COLOR)
-        # head
-        draw_cell(self.screen, self.snake.head, HEAD_COLOR)
+            
+        # Rotate image based on direction
+        head_image = self.head_image
+        if self.snake.direction == LEFT:
+            head_image = pygame.transform.rotate(head_image, 90)
+        elif self.snake.direction == RIGHT:
+            head_image = pygame.transform.rotate(head_image, -90)
+        elif self.snake.direction == DOWN:
+            head_image = pygame.transform.rotate(head_image, 180)
+        # Draw head at position
+        self.screen.blit(head_image, 
+            (self.snake.head.x * CELL - (head_image.get_width() - CELL) // 2, 
+            self.snake.head.y * CELL + SCORE_BAR_HEIGHT - (head_image.get_height() - CELL) // 2))
 
         pygame.display.flip()
 
