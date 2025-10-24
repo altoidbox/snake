@@ -6,6 +6,7 @@ import time
 import os
 from collections import deque
 from dataclasses import dataclass
+from itertools import chain
 
 
 FILE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -35,19 +36,29 @@ DIALOG_BG = (40, 40, 40)  # Dark gray for dialog background
 
 # Images
 HEAD_SIZE = int(CELL * 2)
-IMAGE_NAMES = ['head', 'angry', 'happy', 'surprised', 'sad', 'helicopter', 'bleh']
+DEFAULT_HEAD = ['head']
 FOOD_HEADS = ['surprised', 'happy', 'bleh']
-DEAD_HEADS = ['angry', 'sad', 'helicopter']
+DEAD_HEADS = ['angry', 'sad', 'airplane']
+BODY_PARTS = ['body', 'turn']
 IMAGES = {}
-for name in IMAGE_NAMES:
+for name in chain(DEFAULT_HEAD + FOOD_HEADS, DEAD_HEADS, BODY_PARTS):
     path = os.path.join(FILE_DIR, f'{name}.png')
     if os.path.exists(path):
         image = pygame.image.load(path)
-        image = pygame.transform.scale(image, (HEAD_SIZE, HEAD_SIZE))
+        size = (HEAD_SIZE, HEAD_SIZE)
+        if name in BODY_PARTS:
+            size = (int(CELL * 1.2), int(CELL * 1.2))
+        image = pygame.transform.scale(image, size)
     else:
         # Create placeholder image
-        image = pygame.Surface((int(CELL * 1.2), int(CELL * 1.2)))
-        image.fill(HEAD_COLOR)
+        if name in BODY_PARTS:
+            size = (CELL, CELL)
+            color = SNAKE_COLOR
+        else:
+            size =(int(CELL * 1.2), int(CELL * 1.2))
+            color = HEAD_COLOR
+        image = pygame.Surface(size)
+        image.fill(color)
     IMAGES[name] = image
 
 
@@ -105,6 +116,29 @@ def dialog(surface, font, text):
     pygame.display.flip()
 
 
+TURN_TABLE = {
+    (UP, LEFT): lambda img: pygame.transform.flip(img, True, False),
+    (UP, RIGHT): lambda img: img,
+    (DOWN, LEFT): lambda img: pygame.transform.flip(img, True, True),
+    (DOWN, RIGHT): lambda img: pygame.transform.flip(img, False, True),
+    (LEFT, UP): lambda img: pygame.transform.rotate(img, 90),
+    (LEFT, DOWN): lambda img: pygame.transform.flip(pygame.transform.rotate(img, 90), False, True),
+    (RIGHT, UP): lambda img: pygame.transform.flip(pygame.transform.rotate(img, -90), False, True),
+    (RIGHT, DOWN): lambda img: pygame.transform.rotate(img, -90),
+}
+
+ROTATE_TABLE = {
+    UP: lambda img: img,
+    DOWN: lambda img: pygame.transform.rotate(img, 180),
+    LEFT: lambda img: pygame.transform.rotate(img, 90),
+    RIGHT: lambda img: pygame.transform.rotate(img, -90),
+}
+
+
+def rotate_image(image, direction):
+    return ROTATE_TABLE[direction](image)
+
+
 class Snake(object):
     def __init__(self, position: Point, direction=RIGHT, length=BASE_LENGTH):
         self.body = deque()
@@ -115,12 +149,12 @@ class Snake(object):
         self.length = length
 
     def move(self):
+        self.body.appendleft((self.head, self.direction))
         self.direction = self.next_direction
-        self.body.append(self.head)
         self.head += self.direction
         # Remove the tail before checking collisions
         while len(self.body) > self.length:
-            tail = self.body.popleft()
+            tail, _ = self.body.pop()
             self.body_set.remove(tail)
         collision = not in_bounds(self.head) or self.head in self.body_set
         self.body_set.add(self.head)
@@ -138,7 +172,7 @@ class Game(object):
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
-        pygame.display.set_caption("Snake (pygame)")
+        pygame.display.set_caption("Cat Creature Snake Game")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, CELL)
 
@@ -167,7 +201,7 @@ class Game(object):
                     nd = KEY_MAP.get(event.key)
                     if nd:
                         # prevent reverse
-                        if len(self.snake) < 2 or self.snake.head + nd != self.snake.body[-1]:
+                        if len(self.snake) < 2 or self.snake.head + nd != self.snake.body[0][0]:
                             self.snake.next_direction = nd
 
             # Move on interval
@@ -244,17 +278,16 @@ class Game(object):
             pygame.draw.circle(self.screen, col, (cx, cy), CELL // 2 - 2)
 
         # snake body (does not include head)
-        for seg in self.snake.body:
-            draw_cell(self.screen, seg, SNAKE_COLOR)
+        for seg, direction in self.snake.body:
+            #draw_cell(self.screen, seg, SNAKE_COLOR)
+
+            image = rotate_image(IMAGES['body'], direction)
+            self.screen.blit(image, 
+                (seg.x * CELL - (image.get_width() - CELL) // 2, 
+                seg.y * CELL + SCORE_BAR_HEIGHT - (image.get_height() - CELL) // 2))
             
         # Rotate image based on direction
-        head_image = self.head_image
-        if self.snake.direction == LEFT:
-            head_image = pygame.transform.rotate(head_image, 90)
-        elif self.snake.direction == RIGHT:
-            head_image = pygame.transform.rotate(head_image, -90)
-        elif self.snake.direction == DOWN:
-            head_image = pygame.transform.rotate(head_image, 180)
+        head_image = rotate_image(self.head_image, self.snake.direction)
         # Draw head at position
         self.screen.blit(head_image, 
             (self.snake.head.x * CELL - (head_image.get_width() - CELL) // 2, 
