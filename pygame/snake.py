@@ -6,21 +6,30 @@ import time
 import os
 from collections import deque
 from dataclasses import dataclass
-from itertools import chain
+import freetype
+import numpy as np
 
 
 FILE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Add some newer enum values to freetype
+freetype.FT_PIXEL_MODE_BGRA = 7
+freetype.FT_LOAD_NO_SVG = (1 << 24)
+freetype.FT_GLYPH_FORMAT_SVG = int.from_bytes('SVG '.encode('ascii'))
+
+pygame.init()
 
 # Configuration
 CELL = 60
 SCORE_BAR_HEIGHT = CELL / 2
-GRID_W = 20
-GRID_H = 15
+GRID_W = 15
+GRID_H = 12
 WINDOW_W = GRID_W * CELL
 WINDOW_H = GRID_H * CELL + SCORE_BAR_HEIGHT  # extra for score bar
 FPS = 60
 
 STARTING_INTERVAL = 0.8
+MINIMUM_INTERVAL = 0.1
+INTERVAL_ADJUSTMENT = 0.94  # each treat reduces interval by this factor
 BASE_LENGTH = 2
 
 # Colors
@@ -31,43 +40,156 @@ SNAKE_COLOR = (50, 220, 50)  # Green
 HEAD_COLOR = (20, 200, 20)  # Darker Green
 # Treat colors, first is red, second orange, third yellow, fourth purple
 TREAT_COLORS = [(220, 60, 60), (220, 140, 40), (220, 200, 40), (200, 80, 180)]
+TREAT_ICONS =  [0x1f32d] #['🍎', '🍒', '🍊', '🍓', '🍇', '🍑' ]
 TEXT_COLOR = (230, 230, 230)  # Off-white
 DIALOG_BG = (40, 40, 40)  # Dark gray for dialog background
+FULL_TRANSPARENCY = (0, 0, 0, 0)
+
+HEAD_SCALE = 2.0
+BODY_SCALE = 1.0
+
+
+def transform_pan(surface: pygame.Surface, offset_dims: tuple[int, int]) -> pygame.Surface:
+    """Pan the surface by offset_dims (x, y)"""
+    new_surface = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+    new_surface.blit(surface, offset_dims)
+    return new_surface
+
+
+class Image:
+    _all = {}
+
+    def __init__(self, name: str, surface: pygame.Surface):
+        self.name = name
+        self.surface = surface
+        Image._all[name] = surface
+
+    @classmethod
+    def get(cls, key):
+        return cls._all[key]
+
+
+class FileImage(Image):
+    def __init__(self, name: str, scale: float, backup_color):
+        path = os.path.join(FILE_DIR, 'images', f'{name}.png')
+        size = (CELL * scale, CELL * scale)
+        if os.path.exists(path):
+            surface = pygame.image.load(path)
+            surface = pygame.transform.smoothscale(surface, size)
+        else:
+            # Create placeholder image
+            surface = pygame.Surface(size)
+            surface.fill(backup_color)
+        super().__init__(name, surface)
+    
+
+class HeadImage(FileImage):
+    def __init__(self, name: str, scale: float = HEAD_SCALE):
+        super().__init__(name, scale, HEAD_COLOR)
+
+
+class BodyImage(FileImage):
+    def __init__(self, name: str, scale: float = BODY_SCALE):
+        super().__init__(name, scale, SNAKE_COLOR)
+
+
+class GlyphImage(Image):
+    def __init__(self, name: str, glyph: str, scale: float = 1.0):
+        #font_name = 'NotoColorEmoji-Regular.ttf'
+        #font_name = 'AppleColorEmoji.ttf'
+        if sys.platform == 'linux':
+            font_name = '/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf'
+        elif sys.platform == 'win32':
+            font_name = 'C:\\Windows\\Fonts\\seguiemj.ttf'
+        #font_name = os.path.join(FILE_DIR, 'AppleColorEmoji.ttf')
+        #font_name = os.path.join(FILE_DIR, 'NotoColorEmoji-Regular.ttf')
+        #face = freetype.Face(font_name)
+        #print(face.family_name, face.available_sizes)
+        #face.set_char_size(int(face.available_sizes[-1].size))
+        #size = 48
+        #face.set_pixel_sizes(size, size)
+        #face.load_char(glyph, freetype.FT_LOAD_COLOR)
+        #face.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
+        #ft_bitmap = face.glyph.bitmap
+        #print(ft_bitmap.width, ft_bitmap.rows, ft_bitmap)
+        #bitmap = np.array(ft_bitmap.buffer, dtype=np.uint8).reshape((ft_bitmap.rows, ft_bitmap.width, 4))
+        #bitmap[:, :, [0, 2]] = bitmap[:, :, [2, 0]]  # BGRA to RGBA
+        ##print(name, glyph, (ft_bitmap.width, ft_bitmap.rows))
+        #surface = pygame.image.frombuffer(bitmap.flatten(), (ft_bitmap.width, ft_bitmap.rows), 'RGBA')
+        surface = self.render(self.load_font(font_name), glyph)
+        if surface is None:
+            exit(1)
+        width, height = surface.get_size()
+        scale_factor = min(CELL * scale / width, CELL * scale / height)
+        surface = pygame.transform.smoothscale(surface, (int(width * scale_factor), int(height * scale_factor)))
+        # surface = pygame.font.Font(os.path.join(FILE_DIR, 'NotoColorEmoji-Regular.ttf'), size).render(glyph, True, TEXT_COLOR)
+        super().__init__(name, surface)
+
+    def load_font(self, font_path):
+        """Load a font and return the freetype Face object."""
+        # Load the font
+        face = freetype.Face(font_path)
+
+        # Get available fixed sizes if any
+        if face.available_sizes:
+            print("Available fixed sizes:", [(size.x_ppem, size.y_ppem) for size in face.available_sizes])
+            face.set_char_size(int(face.available_sizes[-1].x_ppem), int(face.available_sizes[-1].y_ppem))
+        elif face.is_scalable:
+            print(f"Font is scalable. Units per EM: {face.units_per_EM} {face.bbox.xMax, face.bbox.yMax}")
+            # Set the size (you can use either method)
+            # face.set_char_size(size * 64, 0, 72, 72)  # size in points, resolution in DPI
+            face.set_pixel_sizes(CELL, CELL)  # width and height in pixels
+        else:
+            print("Font is not scalable and has no available sizes.")
+            exit(1)
+
+        return face
+
+    def render(self, face: freetype.Face, char):
+        face.load_char(char, freetype.FT_LOAD_COLOR | freetype.FT_LOAD_NO_SVG | freetype.FT_LOAD_RENDER)
+        if face.glyph.format != freetype.FT_GLYPH_FORMAT_BITMAP and face.glyph.format != freetype.FT_GLYPH_FORMAT_OUTLINE:
+            print(f"Unsupported glyph format: {face.glyph.format.to_bytes(4, 'big').decode('ascii')}")
+            return None
+        #if face.glyph.format == freetype.FT_GLYPH_FORMAT_OUTLINE:
+        # Render the glyph to a bitmap, in case it isn't already in that format
+        #face.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
+        # Render the glyph onto the surface
+        bitmap = face.glyph.bitmap
+        # Check bitmap format
+        if bitmap.pixel_mode == freetype.FT_PIXEL_MODE_GRAY:
+            # Single channel (grayscale)
+            bitmap_array = np.array(bitmap.buffer, dtype=np.uint8).reshape((bitmap.width, bitmap.rows))
+            # Convert to RGBA with alpha channel set to 255 (fully opaque)
+            #bitmap_array = np.stack([bitmap_array] * 3 + [np.full_like(bitmap_array, 255)], axis=-1)
+            bitmap_array = np.stack([np.full_like(bitmap_array, 255)] * 3 + [bitmap_array], axis=-1)
+        elif bitmap.pixel_mode == freetype.FT_PIXEL_MODE_BGRA:
+            # 4 channels (BGRA)
+            bitmap_array = np.array(bitmap.buffer, dtype=np.uint8).reshape((bitmap.width, bitmap.rows, 4))
+            bitmap_array[:, :, [0, 2]] = bitmap_array[:, :, [2, 0]]  # BGRA to RGBA
+        else:
+            print(f"Unsupported pixel mode: {bitmap.pixel_mode}")
+            return None
+        return pygame.image.frombuffer(bitmap_array.flatten(), (bitmap.width, bitmap.rows), 'RGBA')
+
 
 # Images
-HEAD_SIZE = int(CELL * 2)
-DEFAULT_HEAD = ['head']
-FOOD_HEADS = ['surprised', 'happy', 'bleh']
-DEAD_HEADS = ['angry', 'sad', 'airplane']
-BODY_PARTS = ['body', 'turn']
-IMAGES = {}
-for name in chain(DEFAULT_HEAD + FOOD_HEADS, DEAD_HEADS, BODY_PARTS):
-    path = os.path.join(FILE_DIR, f'{name}.png')
-    if os.path.exists(path):
-        image = pygame.image.load(path)
-        size = (HEAD_SIZE, HEAD_SIZE)
-        if name in BODY_PARTS:
-            size = (int(CELL * 1.2), int(CELL * 1.2))
-        image = pygame.transform.scale(image, size)
-    else:
-        # Create placeholder image
-        if name in BODY_PARTS:
-            size = (CELL, CELL)
-            color = SNAKE_COLOR
-        else:
-            size =(int(CELL * 1.2), int(CELL * 1.2))
-            color = HEAD_COLOR
-        image = pygame.Surface(size)
-        image.fill(color)
-    IMAGES[name] = image
+FOOD_HEADS_PROB = [0.7, 0.2, 0.1]  # probabilities for food headsq
+FOOD_HEADS = [img.surface for img in (HeadImage('happy'), HeadImage('surprised'), HeadImage('bleh'))]
+DEAD_HEADS = [img.surface for img in (HeadImage('angry'), HeadImage('sad'), HeadImage('airplane'))]
+OTHER_PARTS = [img.surface for img in (HeadImage('head'), BodyImage('body'), BodyImage('turn'), BodyImage('tail'))]
+TREATS = [img.surface for img in (GlyphImage(f'treat_{i}', glyph, 0.75) for i, glyph in enumerate(TREAT_ICONS))]
 
+DEFAULT_HEAD = Image.get('head')
+DEFAULT_BODY = Image.get('body')
+DEFAULT_TURN = Image.get('turn')
+DEFAULT_TAIL = Image.get('tail')
 
 @dataclass(frozen=True)
 class Point:
     x: int
     y: int
 
-    def __add__(self, other):
+    def __add__(self, other: 'Point') -> 'Point':
         return Point(self.x + other.x, self.y + other.y)
 
 
@@ -94,19 +216,19 @@ def in_bounds(p: Point) -> bool:
     return 1 <= p.x < GRID_W - 1 and 1 <= p.y < GRID_H - 1
 
 
-def draw_cell(surface, pos: Point, color):
+def draw_cell(surface: pygame.Surface, pos: Point, color: tuple[int, int, int]):
     rect = pygame.Rect(pos.x * CELL, pos.y * CELL + SCORE_BAR_HEIGHT, CELL, CELL)
     pygame.draw.rect(surface, color, rect)
 
 
-def spawn_treat(snake, treats):
+def spawn_treat(snake: 'Snake', treats: dict):
     while True:
         p = Point(random.randint(1, GRID_W - 2), random.randint(1, GRID_H - 2))
         if p not in snake and p not in treats:
             return p
 
 
-def dialog(surface, font, text):
+def dialog(surface: pygame.Surface, font: pygame.font.Font, text: str):
     txt = font.render(text, True, TEXT_COLOR)
     s = pygame.Surface((txt.get_width() + CELL * 2, txt.get_height() + CELL))
     s.fill(DIALOG_BG)
@@ -133,10 +255,9 @@ ROTATE_TABLE = {
     LEFT: lambda img: pygame.transform.rotate(img, 90),
     RIGHT: lambda img: pygame.transform.rotate(img, -90),
 }
-
-
-def rotate_image(image, direction):
-    return ROTATE_TABLE[direction](image)
+# For the body, left and right are the same
+BODY_ROTATE_TABLE = dict(ROTATE_TABLE)
+BODY_ROTATE_TABLE[LEFT] = BODY_ROTATE_TABLE[RIGHT]
 
 
 class Snake(object):
@@ -149,12 +270,17 @@ class Snake(object):
         self.length = length
 
     def move(self):
-        self.body.appendleft((self.head, self.direction))
+        if self.direction != self.next_direction:
+            # Add a turn segment
+            image = TURN_TABLE[(self.direction, self.next_direction)](DEFAULT_TURN)
+        else:
+            image = BODY_ROTATE_TABLE[self.direction](DEFAULT_BODY)
+        self.body.appendleft((self.head, image, self.next_direction))
         self.direction = self.next_direction
         self.head += self.direction
         # Remove the tail before checking collisions
         while len(self.body) > self.length:
-            tail, _ = self.body.pop()
+            tail, _, _ = self.body.pop()
             self.body_set.remove(tail)
         collision = not in_bounds(self.head) or self.head in self.body_set
         self.body_set.add(self.head)
@@ -169,13 +295,17 @@ class Snake(object):
 
 
 class Game(object):
-    def __init__(self):
-        pygame.init()
+    def __init__(self, debug=False):
+        self.debug = debug
         self.screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
         pygame.display.set_caption("Cat Creature Snake Game")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, CELL)
 
+        # Initialize game state
+        self.reset()
+
+    def reset(self):
         # Initialize game state
         self.interval = STARTING_INTERVAL
         self.snake = Snake(Point(2, 2), direction=RIGHT, length=BASE_LENGTH)
@@ -187,10 +317,11 @@ class Game(object):
         self.running = True
         self.game_over = False
 
-        self.head_image = IMAGES['head']
-    
-    def run(self):
+        self.head_image = DEFAULT_HEAD
         self.draw()
+
+
+    def run(self):
         head_image_time = time.time()
         while self.running:
             now = time.time()
@@ -207,26 +338,26 @@ class Game(object):
             # Move on interval
             if now - self.last_move >= self.interval:
                 if now - head_image_time > 0.9:
-                    self.head_image = IMAGES['head']
+                    self.head_image = DEFAULT_HEAD
                 self.last_move = now
                 try:
                     self.snake.move()
                 except ValueError:
-                    self.head_image = IMAGES[random.choice(DEAD_HEADS)]
+                    self.head_image = random.choice(DEAD_HEADS)
                     self.game_over = True
                 else:
                     # Treat logic
                     if self.snake.head in self.treats:
-                        self.head_image = IMAGES[random.choice(FOOD_HEADS)]
+                        self.head_image = random.choices(FOOD_HEADS, FOOD_HEADS_PROB)[0]
                         head_image_time = time.time()
                         self.treats.pop(self.snake.head)
                         self.snake.length += 1
                         self.score += 1
-                        self.interval = max(0.1, self.interval * 0.92)
+                        self.interval = max(MINIMUM_INTERVAL, self.interval * INTERVAL_ADJUSTMENT)
 
                     self.treat_counter -= 1
                     if self.treat_counter <= 0 and len(self.treats) < 3:
-                        self.treats[spawn_treat(self.snake, self.treats)] = random.choice(TREAT_COLORS)
+                        self.treats[spawn_treat(self.snake, self.treats)] = random.choice(TREATS)  # TREAT_COLORS
                         self.treat_counter = random.randint(10, 20)
                     elif self.treat_counter < 0 or (len(self.treats) == 0 and self.treat_counter > 5):
                         self.treat_counter = random.randint(1, 5)
@@ -236,19 +367,28 @@ class Game(object):
 
             # If game over, show dialog and wait for key
             if self.game_over:
-                dialog(self.screen, self.font, "Game Over! Press Enter to exit.")
+                dialog(self.screen, self.font, "Game Over! Continue? (Y/N/Q)")
                 # freeze until user presses enter/esc/q or closes
                 while True:
                     ev = pygame.event.wait()
                     if ev.type == pygame.QUIT:
                         self.running = False
                         break
-                    if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_RETURN, pygame.K_ESCAPE, pygame.K_q):
+                    elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q, pygame.K_n):
                         self.running = False
+                        break
+                    elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_RETURN, pygame.K_y):
+                        self.reset()
                         break
 
         pygame.quit()
         sys.exit()
+    
+    def draw_cell(self, surface: pygame.Surface, pos: Point):
+        self.screen.blit(surface, 
+            (pos.x * CELL - (surface.get_width() - CELL) // 2, 
+            pos.y * CELL + SCORE_BAR_HEIGHT - (surface.get_height() - CELL) // 2))
+
 
     def draw(self):
         self.screen.fill(BG)
@@ -271,32 +411,40 @@ class Game(object):
         self.screen.blit(right_txt, (WINDOW_W - CELL - (CELL//10) - right_txt.get_width(), (CELL + SCORE_BAR_HEIGHT - right_txt.get_height()) // 2))
 
         # treats
-        for t, col in self.treats.items():
+        for pos, treat in self.treats.items():
             # draw a circle centered in the cell
-            cx = t.x * CELL + CELL // 2
-            cy = t.y * CELL + SCORE_BAR_HEIGHT + CELL // 2
-            pygame.draw.circle(self.screen, col, (cx, cy), CELL // 2 - 2)
+            # cx = pos.x * CELL + CELL // 2
+            # cy = pos.y * CELL + SCORE_BAR_HEIGHT + CELL // 2
+            # pygame.draw.circle(self.screen, treat, (cx, cy), CELL // 2 - 2)
+            self.draw_cell(treat, pos)
 
         # snake body (does not include head)
-        for seg, direction in self.snake.body:
-            #draw_cell(self.screen, seg, SNAKE_COLOR)
+        for pos, image, direction in self.snake.body:
+            #draw_cell(self.screen, pos, SNAKE_COLOR)
+            if pos == self.snake.body[-1][0]:
+                image = ROTATE_TABLE[direction](Image.get('tail'))
+            self.draw_cell(image, pos)
 
-            image = rotate_image(IMAGES['body'], direction)
-            self.screen.blit(image, 
-                (seg.x * CELL - (image.get_width() - CELL) // 2, 
-                seg.y * CELL + SCORE_BAR_HEIGHT - (image.get_height() - CELL) // 2))
-            
-        # Rotate image based on direction
-        head_image = rotate_image(self.head_image, self.snake.direction)
+        # Some head are smaller, so draw a cropped segment of the body behind the head
+        head_bg = DEFAULT_BODY.copy()
+        head_bg_rect = head_bg.get_rect()
+        pygame.draw.rect(head_bg, FULL_TRANSPARENCY, head_bg_rect.move(0, -head_bg_rect.height // 5))
+        head_bg = ROTATE_TABLE[self.snake.direction](head_bg)
+        
         # Draw head at position
-        self.screen.blit(head_image, 
-            (self.snake.head.x * CELL - (head_image.get_width() - CELL) // 2, 
-            self.snake.head.y * CELL + SCORE_BAR_HEIGHT - (head_image.get_height() - CELL) // 2))
+        self.draw_cell(head_bg, self.snake.head)
+        self.draw_cell(self.head_image, self.snake.head)
 
         pygame.display.flip()
 
 
 def main():
+    debug = len(sys.argv) > 1
+    if debug:
+        global STARTING_INTERVAL, BASE_LENGTH, MINIMUM_INTERVAL
+        STARTING_INTERVAL = 0.5
+        MINIMUM_INTERVAL = 0.2
+        BASE_LENGTH = 20
     game = Game()
     game.run()
 
