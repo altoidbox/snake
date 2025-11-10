@@ -27,9 +27,14 @@ WINDOW_W = GRID_W * CELL
 WINDOW_H = GRID_H * CELL + SCORE_BAR_HEIGHT  # extra for score bar
 FPS = 60
 
+MOVES_PER_SECOND = 1.25
+SPEED_INCREASE = 0.25
+MAX_MOVES_PER_SECOND = 9
+
 STARTING_INTERVAL = 0.8
 MINIMUM_INTERVAL = 0.1
 INTERVAL_ADJUSTMENT = 0.94  # each treat reduces interval by this factor
+
 BASE_LENGTH = 2
 
 # Colors
@@ -40,7 +45,7 @@ SNAKE_COLOR = (50, 220, 50)  # Green
 HEAD_COLOR = (20, 200, 20)  # Darker Green
 # Treat colors, first is red, second orange, third yellow, fourth purple
 TREAT_COLORS = [(220, 60, 60), (220, 140, 40), (220, 200, 40), (200, 80, 180)]
-TREAT_ICONS =  [0x1f32d] #['🍎', '🍒', '🍊', '🍓', '🍇', '🍑' ]
+TREAT_ICONS =  ['🍎', '🍒', '🍊', '🍓', '🍇', '🍑']
 TEXT_COLOR = (230, 230, 230)  # Off-white
 DIALOG_BG = (40, 40, 40)  # Dark gray for dialog background
 FULL_TRANSPARENCY = (0, 0, 0, 0)
@@ -101,21 +106,8 @@ class GlyphImage(Image):
             font_name = '/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf'
         elif sys.platform == 'win32':
             font_name = 'C:\\Windows\\Fonts\\seguiemj.ttf'
-        #font_name = os.path.join(FILE_DIR, 'AppleColorEmoji.ttf')
+        font_name = os.path.join(FILE_DIR, 'AppleColorEmoji.ttf')
         #font_name = os.path.join(FILE_DIR, 'NotoColorEmoji-Regular.ttf')
-        #face = freetype.Face(font_name)
-        #print(face.family_name, face.available_sizes)
-        #face.set_char_size(int(face.available_sizes[-1].size))
-        #size = 48
-        #face.set_pixel_sizes(size, size)
-        #face.load_char(glyph, freetype.FT_LOAD_COLOR)
-        #face.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
-        #ft_bitmap = face.glyph.bitmap
-        #print(ft_bitmap.width, ft_bitmap.rows, ft_bitmap)
-        #bitmap = np.array(ft_bitmap.buffer, dtype=np.uint8).reshape((ft_bitmap.rows, ft_bitmap.width, 4))
-        #bitmap[:, :, [0, 2]] = bitmap[:, :, [2, 0]]  # BGRA to RGBA
-        ##print(name, glyph, (ft_bitmap.width, ft_bitmap.rows))
-        #surface = pygame.image.frombuffer(bitmap.flatten(), (ft_bitmap.width, ft_bitmap.rows), 'RGBA')
         surface = self.render(self.load_font(font_name), glyph)
         if surface is None:
             exit(1)
@@ -160,7 +152,6 @@ class GlyphImage(Image):
             # Single channel (grayscale)
             bitmap_array = np.array(bitmap.buffer, dtype=np.uint8).reshape((bitmap.width, bitmap.rows))
             # Convert to RGBA with alpha channel set to 255 (fully opaque)
-            #bitmap_array = np.stack([bitmap_array] * 3 + [np.full_like(bitmap_array, 255)], axis=-1)
             bitmap_array = np.stack([np.full_like(bitmap_array, 255)] * 3 + [bitmap_array], axis=-1)
         elif bitmap.pixel_mode == freetype.FT_PIXEL_MODE_BGRA:
             # 4 channels (BGRA)
@@ -229,11 +220,18 @@ def spawn_treat(snake: 'Snake', treats: dict):
 
 
 def dialog(surface: pygame.Surface, font: pygame.font.Font, text: str):
-    txt = font.render(text, True, TEXT_COLOR)
-    s = pygame.Surface((txt.get_width() + CELL * 2, txt.get_height() + CELL))
+    txt = [font.render(line, True, TEXT_COLOR) for line in text.splitlines()]
+    total_width = max(t.get_width() for t in txt) + CELL * 2
+    total_height = sum((t.get_height() * 1.2) for t in txt) + CELL
+    s = pygame.Surface((total_width, total_height))
     s.fill(DIALOG_BG)
     pygame.draw.rect(s, TEXT_COLOR, s.get_rect(), 2)
-    s.blit(txt, (CELL, CELL // 2))
+    line_y = CELL // 2
+    for i, line in enumerate(txt):
+        line_padding = line.get_height() * 0.1
+        line_y += line_padding
+        s.blit(line, (total_width // 2 - (line.get_width() // 2), line_y))
+        line_y += line.get_height() + line_padding
     surface.blit(s, ((WINDOW_W - s.get_width()) // 2, (WINDOW_H - s.get_height()) // 2))
     pygame.display.flip()
 
@@ -307,7 +305,8 @@ class Game(object):
 
     def reset(self):
         # Initialize game state
-        self.interval = STARTING_INTERVAL
+        self.moves_per_second = MOVES_PER_SECOND
+        self.interval = 1 / self.moves_per_second  # STARTING_INTERVAL
         self.snake = Snake(Point(2, 2), direction=RIGHT, length=BASE_LENGTH)
         self.treats = {}
         self.treat_counter = 20
@@ -353,7 +352,11 @@ class Game(object):
                         self.treats.pop(self.snake.head)
                         self.snake.length += 1
                         self.score += 1
-                        self.interval = max(MINIMUM_INTERVAL, self.interval * INTERVAL_ADJUSTMENT)
+                        self.moves_per_second += SPEED_INCREASE
+                        if self.moves_per_second > MAX_MOVES_PER_SECOND:
+                            self.moves_per_second = MAX_MOVES_PER_SECOND
+                        self.interval = 1 / self.moves_per_second
+                        #self.interval = max(MINIMUM_INTERVAL, self.interval * INTERVAL_ADJUSTMENT)
 
                     self.treat_counter -= 1
                     if self.treat_counter <= 0 and len(self.treats) < 3:
@@ -367,8 +370,8 @@ class Game(object):
 
             # If game over, show dialog and wait for key
             if self.game_over:
-                dialog(self.screen, self.font, "Game Over! Continue? (Y/N/Q)")
-                # freeze until user presses enter/esc/q or closes
+                dialog(self.screen, self.font, "Game Over!\nContinue? (Y/N/Q)")
+                # freeze until user presses esc/q/n or closes, can continue with y/enter
                 while True:
                     ev = pygame.event.wait()
                     if ev.type == pygame.QUIT:
@@ -377,7 +380,7 @@ class Game(object):
                     elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_q, pygame.K_n):
                         self.running = False
                         break
-                    elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_RETURN, pygame.K_y):
+                    elif ev.type == pygame.KEYDOWN and ev.key in (pygame.K_RETURN, pygame.K_y, pygame.K_KP_ENTER):
                         self.reset()
                         break
 
