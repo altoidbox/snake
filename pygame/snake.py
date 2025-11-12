@@ -95,14 +95,8 @@ class BodyImage(FileImage):
 
 class GlyphImage(Image):
     def __init__(self, name: str, glyph: str, scale: float = 1.0):
-        #font_name = 'NotoColorEmoji-Regular.ttf'
-        #font_name = 'AppleColorEmoji.ttf'
-        if sys.platform == 'linux':
-            font_name = '/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf'
-        elif sys.platform == 'win32':
-            font_name = 'C:\\Windows\\Fonts\\seguiemj.ttf'
-        #font_name = os.path.join(FILE_DIR, 'AppleColorEmoji.ttf')
-        #font_name = os.path.join(FILE_DIR, 'NotoColorEmoji-Regular.ttf')
+        font_name = os.path.join(FILE_DIR, 'fonts', 'AppleColorEmoji.ttf')
+        #font_name = os.path.join(FILE_DIR, 'fonts', 'NotoColorEmoji-Regular.ttf')
         #face = freetype.Face(font_name)
         #print(face.family_name, face.available_sizes)
         #face.set_char_size(int(face.available_sizes[-1].size))
