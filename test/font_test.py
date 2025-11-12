@@ -9,29 +9,40 @@ import cairosvg
 import cairosvg.parser
 import cairosvg.bounding_box
 from cairosvg.surface import SVGSurface, PNGSurface
+import cairocffi as cairo
 
 import time
 
+# These were added in a later version
+# freetype.FT_PIXEL_MODE_BGRA = 7
+# freetype.FT_GLYPH_FORMAT_SVG = int.from_bytes('SVG '.encode('ascii'))
+# freetype.FT_LOAD_NO_SVG = (1 << 24)
+# 
+# class FT_SVG_DocumentRec(ctypes.Structure):
+#     _fields_ = [
+#         ("svg_document",          POINTER(freetype.ft_structs.FT_Byte)),
+#         ("svg_document_length",   freetype.ft_structs.FT_ULong),
+# 
+#         ("metrics",               freetype.ft_structs.FT_Size_Metrics),
+#         ("units_per_EM",          freetype.ft_structs.FT_UShort),
+# 
+#         ("start_glyph_id",        freetype.ft_structs.FT_UShort),
+#         ("end_glyph_id",          freetype.ft_structs.FT_UShort),
+# 
+#         ("transform",             freetype.ft_structs.FT_Matrix),
+#         ("delta",                 freetype.ft_structs.FT_Vector),
+#     ]
+# FT_SVG_Document = ctypes.POINTER(FT_SVG_DocumentRec)
 
-freetype.FT_PIXEL_MODE_BGRA = 7
-freetype.FT_GLYPH_FORMAT_SVG = int.from_bytes('SVG '.encode('ascii'))
-freetype.FT_LOAD_NO_SVG = (1 << 24)
 
-class FT_SVG_DocumentRec(ctypes.Structure):
-    _fields_ = [
-        ("svg_document", ctypes.c_void_p),
-        ("svg_document_length", ctypes.c_ulong),
+class RecordingSurface(SVGSurface):
+    def __init__(self, tree, *args, **kwargs):
+        self.tree = tree
+        super().__init__(tree, *args, **kwargs)
 
-        ("metrics", freetype.ft_structs.FT_Size_Metrics),
-        ("units_per_EM", ctypes.c_uint16),
-
-        ("start_glyph_id", ctypes.c_uint16),
-        ("end_glyph_id", ctypes.c_uint16),
-
-        ("transform", freetype.ft_structs.FT_Matrix),
-        ("delta", freetype.ft_structs.FT_Vector),
-    ]
-FT_SVG_Document = ctypes.POINTER(FT_SVG_DocumentRec)
+    def _create_surface(self, width, height):
+        _, _, viewbox = cairosvg.surface.node_format(self, self.tree)
+        return cairo.RecordingSurface(cairo.CONTENT_COLOR_ALPHA, (0, 0, width, height)), width, height
 
 
 print("freetype version:", freetype.version())
@@ -109,7 +120,7 @@ def render_glyph(face: freetype.Face):
     if glyph is None:
         print(f"Glyph for codepoint not found in font.")
         return None
-    glyph_index = glyph._FT_GlyphSlot.contents.reserved
+    glyph_index = glyph._FT_GlyphSlot.contents.glyph_index
     print(f"Glyph format for {glyph_index}: {glyph.format.to_bytes(4, 'big').decode('ascii')}")
     if glyph.format == freetype.FT_GLYPH_FORMAT_BITMAP or glyph.format == freetype.FT_GLYPH_FORMAT_OUTLINE:
         glyph.render(freetype.FT_RENDER_MODE_NORMAL)
@@ -134,7 +145,7 @@ def render_glyph(face: freetype.Face):
         return pygame.image.frombuffer(bitmap_array.flatten(), (bitmap.width, bitmap.rows), 'RGBA')
     elif glyph.format == freetype.FT_GLYPH_FORMAT_SVG:
         # SVG glyph: try to obtain the SVG data and rasterize it to a PNG, then blit into the surface.
-        svg_doc = ctypes.cast(glyph._FT_GlyphSlot.contents.other, FT_SVG_Document).contents
+        svg_doc = ctypes.cast(glyph._FT_GlyphSlot.contents.other, freetype.ft_structs.FT_SVG_Document).contents
         doc_bytes_type = ctypes.POINTER(ctypes.c_ubyte * svg_doc.svg_document_length)
         svg_data = bytes(ctypes.cast(svg_doc.svg_document, doc_bytes_type).contents)
         
@@ -164,42 +175,53 @@ def render_glyph(face: freetype.Face):
                     break
             tree.children = new_children
         
-        l, t, w, h = get_svg_content_bounds(tree)
+        #l, t, w, h = get_svg_content_bounds(tree)
+        print(f"bbox - min: {face.bbox.xMin, -face.bbox.yMax}, max: {face.bbox.xMax, -face.bbox.yMin}")
+        l, t, w, h = face.bbox.xMin, -face.bbox.yMax, (face.bbox.xMax - face.bbox.xMin), (face.bbox.yMax - face.bbox.yMin)
+        tree['viewBox'] = f"{l} {t} {w} {h}"
+        tree['overflow'] = 'visible'
+        scale = svg_doc.metrics.x_ppem / svg_doc.units_per_EM
+        print(l, t, w, h)
+        #surface = RecordingSurface(tree, output=None, scale=scale, dpi=96)
+        #print('extents', surface.cairo.ink_extents())
         #svg_data = svg_data.replace('"1.1"', f'"1.1" viewBox="{face.bbox.xMin} {-face.bbox.yMax} {face.bbox.xMax - face.bbox.xMin} {face.bbox.yMax - face.bbox.yMin}"')
-        if 'viewBox' not in tree:
-            tree['viewBox'] = f"{l} {t} {w} {h}"
+        # if 'viewBox' not in tree:
+        #     tree['viewBox'] = f"{l} {t} {w} {h}"
 
-        transform = np.matrix([
-            (svg_doc.transform.xx / (1 << 16), svg_doc.transform.xy / (1 << 16)),
-            (svg_doc.transform.yx / (1 << 16), svg_doc.transform.yy / (1 << 16)),
-            (svg_doc.delta.x / 64 * svg_doc.units_per_EM / svg_doc.metrics.x_ppem, svg_doc.delta.y / 64 * svg_doc.units_per_EM / svg_doc.metrics.y_ppem),
-        ])
-        m_scale = np.matrix([
-            (svg_doc.metrics.x_ppem / svg_doc.units_per_EM, 0, 0), 
-            (svg_doc.metrics.y_ppem / svg_doc.units_per_EM, 0, 0),
-        ])
-        matrix = transform * m_scale
-        extents = [
-            (l, t),
-            (l + w, t),
-            (l + w, t + h),
-            (l, t + h),
-        ]
-        for i, (x, y) in enumerate(extents):
-            nx = x * matrix[0][0] + y * matrix[1][0] + matrix[2][0]
-            ny = x * matrix[0][1] + y * matrix[1][1] + matrix[2][1]
-            extents[i] = (nx, ny)
+        # transform = np.matrix([
+        #     (svg_doc.transform.xx / (1 << 16), svg_doc.transform.xy / (1 << 16)),
+        #     (svg_doc.transform.yx / (1 << 16), svg_doc.transform.yy / (1 << 16)),
+        #     (svg_doc.delta.x / 64 * svg_doc.units_per_EM / svg_doc.metrics.x_ppem, svg_doc.delta.y / 64 * svg_doc.units_per_EM / svg_doc.metrics.y_ppem),
+        # ])
+        # m_scale = np.matrix([
+        #     (svg_doc.metrics.x_ppem / svg_doc.units_per_EM, 0, 0), 
+        #     (svg_doc.metrics.y_ppem / svg_doc.units_per_EM, 0, 0),
+        # ])
+        # matrix = transform * m_scale
+        # extents = [
+        #     (l, t),
+        #     (l + w, t),
+        #     (l + w, t + h),
+        #     (l, t + h),
+        # ]
+        # for i, (x, y) in enumerate(extents):
+        #     nx = x * matrix[0][0] + y * matrix[1][0] + matrix[2][0]
+        #     ny = x * matrix[0][1] + y * matrix[1][1] + matrix[2][1]
+        #     extents[i] = (nx, ny)
         
         #svg_data = svg_data.replace(b'"1.1"', f'"1.1" viewBox="{l} {t} {w} {h}"'.encode())
         scale = svg_doc.metrics.x_ppem / svg_doc.units_per_EM
-        glyph._FT_GlyphSlot.contents.bitmap_left = int(l * scale)
-        glyph._FT_GlyphSlot.contents.bitmap_top = -int(t * scale)
+        #glyph._FT_GlyphSlot.contents.bitmap_left = int(l * scale)
+        #glyph._FT_GlyphSlot.contents.bitmap_top = -int(t * scale)
+        glyph._FT_GlyphSlot.contents.bitmap_top = face.size.y_ppem
 
         try:
             # Render SVG to PNG bytes at requested pixel size (width x height)
-            png_surface = PNGSurface(tree, io.BytesIO(), output_width=face.size.x_ppem, output_height=face.size.y_ppem, scale=scale, dpi=96)
+            #png_surface = PNGSurface(tree, io.BytesIO(), output_width=face.size.x_ppem, output_height=face.size.y_ppem, scale=scale, dpi=96)
+            png_surface = PNGSurface(tree, io.BytesIO(), scale=scale, dpi=96)
             png_surface.finish()
             png_bytes = png_surface.output.getvalue()
+            #cairo.surfaces.ImageSurface()
         except Exception as e:
             print("Failed to rasterize SVG glyph:", e)
             return None
@@ -216,7 +238,7 @@ def render_glyph(face: freetype.Face):
 
 # Example usage:
 font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-font_path = "./pygame/NotoColorEmoji-Regular.ttf"
+font_path = "./pygame/fonts/NotoColorEmoji-Regular.ttf"
 #font_path = "./pygame/AppleColorEmoji.ttf"
 
 #emoji_codepoint = 0x1F600  # U+1F600 (grinning face)
@@ -282,7 +304,8 @@ def glyph_scroll():
 
 
 def show_emoji():
-    for emoji in ['🍎', '🍒', '🍊', '🍓', '🍇', '🍑']:
+    # 3391: hot dog
+    for emoji in [0x1F600, '🍎', '🍒', '🍊', '🍓', '🍇', '🍑', ]:
         if isinstance(emoji, str):
             emoji_codepoint = ord(emoji)
         else:
@@ -303,5 +326,5 @@ def show_emoji():
     pygame.quit()
     exit()
 
-#glyph_scroll()
+glyph_scroll()
 show_emoji()
