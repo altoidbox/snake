@@ -157,13 +157,22 @@ class Screen(Grid):
                     continue
                 self.draw_glyph(Point(x, y), fill)
 
+    def glyph_len(self, length):
+        return (length + self.glyph_width - 1) // self.glyph_width
+
     def dialog(self, message):
+        lines = message.splitlines()
+        longest_line = max(len(line) for line in lines)
         mid_x = self.width // 2
         mid_y = self.height // 2
-        msg_glyph_len = (len(message) + self.glyph_width - 1) // self.glyph_width
+        msg_glyph_len = self.glyph_len(longest_line)
         start_x = mid_x - msg_glyph_len // 2
-        self.draw_border(start=Point(start_x - 3, mid_y - 2), end=Point(start_x + msg_glyph_len + 2, mid_y + 2), border='#')
-        self.draw_glyph(Point(start_x, mid_y), message)
+        start_y = mid_y - len(lines) // 2
+        self.draw_border(start=Point(start_x - 3, start_y - 2),
+                         end=Point(start_x + msg_glyph_len + 2, start_y + len(lines) + 1),
+                         border='#')
+        for i, line in enumerate(lines):
+            self.draw_glyph(Point(start_x, start_y + i), line)
         sys.stdout.flush()
 
 #U_HEAD = ' ^'
@@ -293,7 +302,7 @@ def run():
             crash_char = screen[pos]
             # Hit border or body, game over
             screen.draw_glyph(pos, CRASH_MAP[cur_dir])
-            screen.dialog(f"Game Over! Press Enter to exit.")
+            screen.dialog(f"     GAME OVER\nPress ENTER to exit")
             input()
             break
         body.append(pos)
