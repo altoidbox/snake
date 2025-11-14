@@ -8,6 +8,7 @@ from collections import deque
 from dataclasses import dataclass
 import freetype
 import numpy as np
+import font
 
 
 FILE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -100,61 +101,17 @@ class BodyImage(FileImage):
 
 class GlyphImage(Image):
     def __init__(self, name: str, glyph: str, scale: float = 1.0):
-        font_name = os.path.join(FILE_DIR, 'fonts', 'AppleColorEmoji.ttf')
-        #font_name = os.path.join(FILE_DIR, 'fonts', 'NotoColorEmoji-Regular.ttf')
-        surface = self.render(self.load_font(font_name), glyph)
+        #font_name = os.path.join(FILE_DIR, 'fonts', 'AppleColorEmoji.ttf')
+        font_name = os.path.join(FILE_DIR, 'fonts', 'NotoColorEmoji-Regular.ttf')
+        face = font.load_font(font_name, int(CELL * scale))
+        surface = font.render_glyph(face, char=glyph)
         if surface is None:
             exit(1)
-        width, height = surface.get_size()
-        scale_factor = min(CELL * scale / width, CELL * scale / height)
-        surface = pygame.transform.smoothscale(surface, (int(width * scale_factor), int(height * scale_factor)))
+        #width, height = surface.get_size()
+        #scale_factor = min(CELL * scale / width, CELL * scale / height)
+        #surface = pygame.transform.smoothscale(surface, (int(width * scale_factor), int(height * scale_factor)))
         # surface = pygame.font.Font(os.path.join(FILE_DIR, 'NotoColorEmoji-Regular.ttf'), size).render(glyph, True, TEXT_COLOR)
         super().__init__(name, surface)
-
-    def load_font(self, font_path):
-        """Load a font and return the freetype Face object."""
-        # Load the font
-        face = freetype.Face(font_path)
-
-        # Get available fixed sizes if any
-        if face.available_sizes:
-            print("Available fixed sizes:", [(size.x_ppem, size.y_ppem) for size in face.available_sizes])
-            face.set_char_size(int(face.available_sizes[-1].x_ppem), int(face.available_sizes[-1].y_ppem))
-        elif face.is_scalable:
-            print(f"Font is scalable. Units per EM: {face.units_per_EM} {face.bbox.xMax, face.bbox.yMax}")
-            # Set the size (you can use either method)
-            # face.set_char_size(size * 64, 0, 72, 72)  # size in points, resolution in DPI
-            face.set_pixel_sizes(CELL, CELL)  # width and height in pixels
-        else:
-            print("Font is not scalable and has no available sizes.")
-            exit(1)
-
-        return face
-
-    def render(self, face: freetype.Face, char):
-        face.load_char(char, freetype.FT_LOAD_COLOR | freetype.FT_LOAD_NO_SVG | freetype.FT_LOAD_RENDER)
-        if face.glyph.format != freetype.FT_GLYPH_FORMAT_BITMAP and face.glyph.format != freetype.FT_GLYPH_FORMAT_OUTLINE:
-            print(f"Unsupported glyph format: {face.glyph.format.to_bytes(4, 'big').decode('ascii')}")
-            return None
-        #if face.glyph.format == freetype.FT_GLYPH_FORMAT_OUTLINE:
-        # Render the glyph to a bitmap, in case it isn't already in that format
-        #face.glyph.render(freetype.FT_RENDER_MODE_NORMAL)
-        # Render the glyph onto the surface
-        bitmap = face.glyph.bitmap
-        # Check bitmap format
-        if bitmap.pixel_mode == freetype.FT_PIXEL_MODE_GRAY:
-            # Single channel (grayscale)
-            bitmap_array = np.array(bitmap.buffer, dtype=np.uint8).reshape((bitmap.width, bitmap.rows))
-            # Convert to RGBA with alpha channel set to 255 (fully opaque)
-            bitmap_array = np.stack([np.full_like(bitmap_array, 255)] * 3 + [bitmap_array], axis=-1)
-        elif bitmap.pixel_mode == freetype.FT_PIXEL_MODE_BGRA:
-            # 4 channels (BGRA)
-            bitmap_array = np.array(bitmap.buffer, dtype=np.uint8).reshape((bitmap.width, bitmap.rows, 4))
-            bitmap_array[:, :, [0, 2]] = bitmap_array[:, :, [2, 0]]  # BGRA to RGBA
-        else:
-            print(f"Unsupported pixel mode: {bitmap.pixel_mode}")
-            return None
-        return pygame.image.frombuffer(bitmap_array.flatten(), (bitmap.width, bitmap.rows), 'RGBA')
 
 
 # Images
