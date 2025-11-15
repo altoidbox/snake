@@ -46,7 +46,7 @@ SNAKE_COLOR = (50, 220, 50)  # Green
 HEAD_COLOR = (20, 200, 20)  # Darker Green
 # Treat colors, first is red, second orange, third yellow, fourth purple
 TREAT_COLORS = [(220, 60, 60), (220, 140, 40), (220, 200, 40), (200, 80, 180)]
-TREAT_ICONS =  ['🍎', '🍒', '🍊', '🍓', '🍇', '🍑']
+TREAT_ICONS =  [chr(c) for c in range(ord('🍄'), ord('🍗') + 1)]
 TEXT_COLOR = (230, 230, 230)  # Off-white
 DIALOG_BG = (40, 40, 40)  # Dark gray for dialog background
 FULL_TRANSPARENCY = (0, 0, 0, 0)
@@ -107,10 +107,6 @@ class GlyphImage(Image):
         surface = font.render_glyph(face, char=glyph)
         if surface is None:
             exit(1)
-        #width, height = surface.get_size()
-        #scale_factor = min(CELL * scale / width, CELL * scale / height)
-        #surface = pygame.transform.smoothscale(surface, (int(width * scale_factor), int(height * scale_factor)))
-        # surface = pygame.font.Font(os.path.join(FILE_DIR, 'NotoColorEmoji-Regular.ttf'), size).render(glyph, True, TEXT_COLOR)
         super().__init__(name, surface)
 
 
